@@ -1,32 +1,51 @@
-# React + TypeScript + Vite
+# Student Profile SaaS
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Multi-tenant college profile and academic records platform for students, teachers, and college administrators.
 
-Currently, two official plugins are available:
+## Development
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Install dependencies:
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Start PostgreSQL with the schema and demo data:
+
+```bash
+npm run db:up
+```
+
+Copy `.env.example` to `.env`, then start the API and web app in separate terminals:
+
+```bash
+npm run dev:api
+npm run dev
+```
+
+The API runs at `http://localhost:4000` and the web app at `http://localhost:5173`.
+
+Demo accounts are seeded by `database/seed.sql` with password `ChangeMe123!`:
+
+- `admin@northstar.edu`
+- `teacher@northstar.edu`
+- `student@northstar.edu`
+
+The database seed is for local development only. Change all credentials before deployment.
+
+## Validation
+
+```bash
+npm run build:api
+npm run build
+npm run lint
+```
+
+## Architecture
+
+- React + Vite + TypeScript frontend
+- Express + JWT API
+- PostgreSQL schema with college tenant ownership
+- S3-compatible presigned document uploads
+- Server-side teacher assignment scoping for marks, students, analytics, and AI tools
+- Fixed parameterized AI tools with audit logging

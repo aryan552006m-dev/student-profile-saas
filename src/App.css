@@ -198,3 +198,20 @@
     border-right-color: var(--border);
   }
 }
+
+.role-switcher { display: flex; padding: 3px; gap: 2px; background: #f0f3f0; border-radius: 7px; }
+.role-switcher button { border: 0; border-radius: 5px; padding: 5px 8px; color: #89928c; background: transparent; font-size: 9px; cursor: pointer; }
+.role-switcher button.selected { color: #276c51; background: white; box-shadow: 0 1px 4px #26463814; font-weight: 700; }
+.student-grid { display: grid; grid-template-columns: minmax(0, 1.18fr) minmax(320px, 1fr); gap: 16px; }
+.profile-panel { grid-column: 1 / -1; }
+.profile-hero { display: flex; align-items: center; gap: 14px; }
+.profile-hero h2 { margin: 0 0 4px; font: 400 22px Georgia, serif; color: #2a3730; }
+.profile-hero p:not(.eyebrow) { margin: 0; color: #929c95; font-size: 10px; }
+.profile-hero .select-button { margin-left: auto; cursor: pointer; }
+.profile-photo { display: grid; place-items: center; width: 58px; height: 58px; border-radius: 16px; background: #dfebe6; color: #39785f; font: 400 20px Georgia, serif; }
+.profile-progress { display: flex; align-items: center; gap: 14px; margin-top: 22px; }
+.profile-progress > div:first-child { display: flex; align-items: baseline; gap: 6px; min-width: 118px; }.profile-progress strong { color: #2f8062; font: 400 20px Georgia, serif; }.profile-progress span { color: #909a94; font-size: 9px; }.progress-track { height: 7px; flex: 1; border-radius: 10px; background: #ecf1ed; overflow: hidden; }.progress-track i { display: block; width: 82%; height: 100%; border-radius: inherit; background: #4b9977; }.profile-progress small { color: #a0a9a3; font-size: 9px; white-space: nowrap; }
+.profile-links { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 20px; }.profile-links span { color: #6b8375; background: #f1f7f3; border-radius: 5px; padding: 7px 9px; font-size: 9px; }
+.grade-row { display: flex; align-items: center; gap: 15px; margin: 22px 0; }.grade-circle { display: grid; place-items: center; width: 64px; height: 64px; border: 5px solid #d9efe2; border-radius: 50%; color: #317d5e; font: 400 20px Georgia, serif; }.grade-circle small { display: block; font: 8px 'Trebuchet MS', sans-serif; color: #98a49d; }.grade-row strong { color: #56625b; font-size: 11px; }.grade-row p { color: #a0aaa3; font-size: 9px; margin: 4px 0 7px; }.grade-row .positive { font-size: 9px; }.subject-mini { display: grid; grid-template-columns: 1fr auto; gap: 10px; border-top: 1px solid #eef1ef; padding-top: 15px; color: #909b94; font-size: 9px; }.subject-mini b { color: #3f8b6a; font-size: 10px; }.records-panel .text-button { padding-top: 0; }
+@media (max-width: 900px) { .student-grid { grid-template-columns: 1fr; }.profile-panel { grid-column: auto; }.profile-progress { flex-wrap: wrap; }.progress-track { min-width: 150px; }.profile-progress small { width: 100%; margin-left: 132px; } }
+@media (max-width: 620px) { .role-switcher { display: none; }.profile-hero { align-items: start; flex-wrap: wrap; }.profile-hero .select-button { width: 100%; margin-left: 72px; }.profile-progress small { margin-left: 0; }.profile-links span { width: 100%; } }

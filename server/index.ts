@@ -117,6 +117,13 @@ const assignmentSchema = z.object({
   semesterId: z.string().uuid(),
 })
 
+const aiQuerySchema = z.object({
+  query: z.string().min(2).max(1000),
+  classId: z.string().uuid().optional(),
+  subjectId: z.string().uuid().optional(),
+  semesterId: z.string().uuid().optional(),
+})
+
 const allowedDocumentTypes: Record<string, { mimeTypes: string[]; maxBytes: number }> = {
   photo: { mimeTypes: ['image/jpeg', 'image/png'], maxBytes: 5 * 1024 * 1024 },
   resume_pdf: { mimeTypes: ['application/pdf'], maxBytes: 10 * 1024 * 1024 },
@@ -411,6 +418,85 @@ app.get('/api/teacher/analytics', requireAuth, requireRoles('teacher'), async (r
       [classId, subjectId, semesterId, request.user!.id],
     )
     return response.json({ analytics: result.rows[0] })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/teacher/ai/query', requireAuth, requireRoles('teacher'), async (request: AuthRequest, response, next) => {
+  try {
+    const input = aiQuerySchema.parse(request.body)
+    const lowerQuery = input.query.toLowerCase()
+    const requiresMarksScope = !input.classId || !input.subjectId || !input.semesterId
+    let resolvedIntent = 'search_student'
+    let responseSummary = ''
+    let chartHint: { type: string; labels: string[]; values: number[] } | undefined
+    let result: { rows: Record<string, unknown>[] } = { rows: [] }
+
+    if (/(topper|highest|best)/.test(lowerQuery)) {
+      resolvedIntent = 'topper'
+      if (requiresMarksScope) return response.status(400).json({ error: 'classId, subjectId, and semesterId are required for topper queries' })
+      result = await pool.query(
+        `SELECT u.full_name, st.roll_number,
+                ROUND((SUM(m.marks_obtained) / NULLIF(SUM(m.max_marks), 0) * 100)::numeric, 2) AS percentage
+           FROM marks m
+           JOIN students st ON st.id = m.student_id
+           JOIN users u ON u.id = st.id AND u.college_id = $5
+          WHERE st.class_id = $1 AND m.subject_id = $2 AND m.semester_id = $3
+            AND EXISTS (SELECT 1 FROM teacher_class_assignments a WHERE a.teacher_id = $4 AND a.class_id = $1 AND a.subject_id = m.subject_id AND a.semester_id = m.semester_id)
+          GROUP BY u.full_name, st.roll_number ORDER BY percentage DESC LIMIT 1`,
+        [input.classId, input.subjectId, input.semesterId, request.user!.id, request.user!.collegeId],
+      )
+      const topper = result.rows[0]
+      responseSummary = topper ? `${topper.full_name} (${topper.roll_number}) is the topper with ${topper.percentage}% in the assigned scope.` : 'No marks are available in the assigned scope.'
+    } else if (/(average|avg|mean)/.test(lowerQuery)) {
+      resolvedIntent = 'average'
+      if (requiresMarksScope) return response.status(400).json({ error: 'classId, subjectId, and semesterId are required for average queries' })
+      result = await pool.query(
+        `SELECT ROUND(AVG(m.marks_obtained / NULLIF(m.max_marks, 0) * 100)::numeric, 2) AS average_percentage,
+                COUNT(DISTINCT m.student_id)::int AS student_count
+           FROM marks m JOIN students st ON st.id = m.student_id AND st.class_id = $1
+          WHERE m.subject_id = $2 AND m.semester_id = $3
+            AND EXISTS (SELECT 1 FROM teacher_class_assignments a WHERE a.teacher_id = $4 AND a.class_id = $1 AND a.subject_id = m.subject_id AND a.semester_id = m.semester_id)`,
+        [input.classId, input.subjectId, input.semesterId, request.user!.id],
+      )
+      const average = result.rows[0]
+      responseSummary = `The assigned class average is ${average?.average_percentage ?? 0}% across ${average?.student_count ?? 0} students.`
+    } else if (/(weak|below|under|fail)/.test(lowerQuery)) {
+      resolvedIntent = 'weakest_students'
+      if (requiresMarksScope) return response.status(400).json({ error: 'classId, subjectId, and semesterId are required for weakest-student queries' })
+      const threshold = Number(lowerQuery.match(/(?:below|under)\s+(\d+)/)?.[1] ?? 40)
+      result = await pool.query(
+        `SELECT u.full_name, st.roll_number, ROUND((AVG(m.marks_obtained / NULLIF(m.max_marks, 0)) * 100)::numeric, 2) AS percentage
+           FROM marks m JOIN students st ON st.id = m.student_id AND st.class_id = $1
+           JOIN users u ON u.id = st.id AND u.college_id = $5
+          WHERE m.subject_id = $2 AND m.semester_id = $3
+            AND EXISTS (SELECT 1 FROM teacher_class_assignments a WHERE a.teacher_id = $4 AND a.class_id = $1 AND a.subject_id = m.subject_id AND a.semester_id = m.semester_id)
+          GROUP BY u.full_name, st.roll_number HAVING AVG(m.marks_obtained / NULLIF(m.max_marks, 0)) * 100 < $6
+          ORDER BY percentage ASC LIMIT 20`,
+        [input.classId, input.subjectId, input.semesterId, request.user!.id, request.user!.collegeId, threshold],
+      )
+      responseSummary = `${result.rows.length} assigned students are below ${threshold}%.`
+      chartHint = { type: 'bar', labels: result.rows.map((row) => String(row.roll_number)), values: result.rows.map((row) => Number(row.percentage)) }
+    } else {
+      const search = `%${input.query.trim()}%`
+      result = await pool.query(
+        `SELECT DISTINCT u.full_name, st.roll_number, c.name AS class_name
+           FROM students st JOIN users u ON u.id = st.id AND u.college_id = $2
+           JOIN classes c ON c.id = st.class_id
+          WHERE (u.full_name ILIKE $1 OR st.roll_number ILIKE $1)
+            AND EXISTS (SELECT 1 FROM teacher_class_assignments a WHERE a.teacher_id = $3 AND a.class_id = st.class_id)
+          ORDER BY u.full_name LIMIT 20`,
+        [search, request.user!.collegeId, request.user!.id],
+      )
+      responseSummary = result.rows.length ? `Found ${result.rows.length} student(s) in your assigned classes.` : 'No student found in your assigned classes.'
+    }
+
+    await pool.query(
+      'INSERT INTO ai_query_logs (user_id, query_text, resolved_intent, response_summary) VALUES ($1, $2, $3, $4)',
+      [request.user!.id, input.query, resolvedIntent, responseSummary],
+    )
+    return response.json({ response: responseSummary, intent: resolvedIntent, results: result.rows, chartHint, provider: 'fixed-scoped-tools' })
   } catch (error) {
     next(error)
   }

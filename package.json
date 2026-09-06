@@ -6,9 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:api": "tsx server/index.ts",
-    "db:up": "docker compose up -d postgres",
-    "db:down": "docker compose down",
-    "db:logs": "docker compose logs -f postgres",
+    "db:init": "powershell -ExecutionPolicy Bypass -File database/init.ps1",
     "build": "tsc -b && vite build",
     "build:api": "tsc -p server/tsconfig.json",
     "lint": "oxlint",

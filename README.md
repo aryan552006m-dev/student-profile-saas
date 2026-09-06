@@ -10,11 +10,13 @@ Install dependencies:
 npm install
 ```
 
-Start PostgreSQL with the schema and demo data:
+Start your native PostgreSQL Windows service, then initialize the schema and demo data:
 
-```bash
-npm run db:up
+```powershell
+npm run db:init
 ```
+
+The script looks for `psql.exe` on PATH or in `C:\Program Files\PostgreSQL\<version>\bin`. Set `PG_BIN` if PostgreSQL is installed elsewhere. Configure `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, and `PGDATABASE` to match your local server.
 
 Copy `.env.example` to `.env`, then start the API and web app in separate terminals:
 
@@ -45,7 +47,7 @@ npm run lint
 
 - React + Vite + TypeScript frontend
 - Express + JWT API
-- PostgreSQL schema with college tenant ownership
+- Native PostgreSQL schema with college tenant ownership
 - S3-compatible presigned document uploads
 - Server-side teacher assignment scoping for marks, students, analytics, and AI tools
 - Fixed parameterized AI tools with audit logging

@@ -1,9 +1,11 @@
 import 'dotenv/config'
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import cors from 'cors'
 import bcrypt from 'bcryptjs'
 import express, { type NextFunction, type Request, type Response } from 'express'
 import jwt from 'jsonwebtoken'
 import { Pool } from 'pg'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { z } from 'zod'
 
 const app = express()
@@ -16,6 +18,22 @@ if (!jwtSecret && process.env.NODE_ENV === 'production') {
 
 const tokenSecret = jwtSecret ?? 'development-only-secret'
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
+const storageBucket = process.env.STORAGE_BUCKET
+const storageClient = process.env.STORAGE_ENDPOINT
+  ? new S3Client({
+      region: process.env.STORAGE_REGION ?? 'auto',
+      endpoint: process.env.STORAGE_ENDPOINT,
+      forcePathStyle: process.env.STORAGE_FORCE_PATH_STYLE === 'true',
+      credentials: process.env.STORAGE_ACCESS_KEY_ID && process.env.STORAGE_SECRET_ACCESS_KEY
+        ? { accessKeyId: process.env.STORAGE_ACCESS_KEY_ID, secretAccessKey: process.env.STORAGE_SECRET_ACCESS_KEY }
+        : undefined,
+    })
+  : new S3Client({
+      region: process.env.STORAGE_REGION ?? 'us-east-1',
+      credentials: process.env.STORAGE_ACCESS_KEY_ID && process.env.STORAGE_SECRET_ACCESS_KEY
+        ? { accessKeyId: process.env.STORAGE_ACCESS_KEY_ID, secretAccessKey: process.env.STORAGE_SECRET_ACCESS_KEY }
+        : undefined,
+    })
 
 type Role = 'super_admin' | 'teacher' | 'student'
 type AuthUser = { id: string; collegeId: string; role: Role; email: string }
@@ -82,6 +100,8 @@ const documentSchema = z.object({
   parsedHeadings: z.array(z.string().min(1).max(80)).max(30).default([]),
 })
 
+const presignSchema = documentSchema.pick({ docType: true, fileName: true, mimeType: true, sizeBytes: true })
+
 const allowedDocumentTypes: Record<string, { mimeTypes: string[]; maxBytes: number }> = {
   photo: { mimeTypes: ['image/jpeg', 'image/png'], maxBytes: 5 * 1024 * 1024 },
   resume_pdf: { mimeTypes: ['application/pdf'], maxBytes: 10 * 1024 * 1024 },
@@ -135,6 +155,24 @@ app.get('/api/students/me', requireAuth, requireRoles('student'), async (request
     )
     if (result.rowCount !== 1) return response.status(404).json({ error: 'Student profile not found' })
     return response.json({ profile: result.rows[0] })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/students/me/documents/presign', requireAuth, requireRoles('student'), async (request: AuthRequest, response, next) => {
+  try {
+    const input = presignSchema.parse(request.body)
+    validateDocument({ ...input, fileUrl: 'https://upload.invalid', parsedHeadings: [] })
+    if (!storageBucket || !process.env.STORAGE_ACCESS_KEY_ID || !process.env.STORAGE_SECRET_ACCESS_KEY) {
+      return response.status(503).json({ error: 'Object storage is not configured' })
+    }
+
+    const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, '-').toLowerCase()
+    const objectKey = `${request.user!.collegeId}/students/${request.user!.id}/${Date.now()}-${safeName}`
+    const command = new PutObjectCommand({ Bucket: storageBucket, Key: objectKey, ContentType: input.mimeType })
+    const uploadUrl = await getSignedUrl(storageClient, command, { expiresIn: 900 })
+    return response.json({ uploadUrl, objectKey, expiresInSeconds: 900 })
   } catch (error) {
     next(error)
   }

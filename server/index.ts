@@ -73,6 +73,29 @@ const profileUpdateSchema = z.object({
   bio: z.string().max(1000).optional(),
 })
 
+const documentSchema = z.object({
+  docType: z.enum(['photo', 'resume_pdf', 'resume_docx', 'certificate', 'other']),
+  fileName: z.string().min(1).max(255),
+  fileUrl: z.string().url(),
+  mimeType: z.string().min(1),
+  sizeBytes: z.number().int().positive(),
+  parsedHeadings: z.array(z.string().min(1).max(80)).max(30).default([]),
+})
+
+const allowedDocumentTypes: Record<string, { mimeTypes: string[]; maxBytes: number }> = {
+  photo: { mimeTypes: ['image/jpeg', 'image/png'], maxBytes: 5 * 1024 * 1024 },
+  resume_pdf: { mimeTypes: ['application/pdf'], maxBytes: 10 * 1024 * 1024 },
+  resume_docx: { mimeTypes: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'], maxBytes: 10 * 1024 * 1024 },
+}
+
+function validateDocument(input: z.infer<typeof documentSchema>) {
+  const rule = allowedDocumentTypes[input.docType]
+  if (!rule) return
+  if (!rule.mimeTypes.includes(input.mimeType) || input.sizeBytes > rule.maxBytes) {
+    throw new Error(`Invalid ${input.docType} file type or size`)
+  }
+}
+
 app.get('/api/health', (_request, response) => {
   response.json({ service: 'student-profile-saas-api', status: 'ok' })
 })
@@ -138,6 +161,38 @@ app.put('/api/students/me', requireAuth, requireRoles('student'), async (request
     )
     if (result.rowCount !== 1) return response.status(404).json({ error: 'Student profile not found' })
     return response.json({ profile: result.rows[0] })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/students/me/documents', requireAuth, requireRoles('student'), async (request: AuthRequest, response, next) => {
+  try {
+    const input = documentSchema.parse(request.body)
+    validateDocument(input)
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      const documentResult = await client.query(
+        `INSERT INTO student_documents (student_id, doc_type, file_url, file_name, parsed_headings, status)
+         VALUES ($1, $2, $3, $4, $5, 'scanning')
+         RETURNING id, doc_type, file_name, parsed_headings, status, uploaded_at`,
+        [request.user!.id, input.docType, input.fileUrl, input.fileName, JSON.stringify(input.parsedHeadings)],
+      )
+      if (input.docType === 'photo') {
+        await client.query('UPDATE students SET profile_photo_url = $1 WHERE id = $2 AND college_id = $3', [input.fileUrl, request.user!.id, request.user!.collegeId])
+      }
+      if (input.docType === 'resume_pdf' || input.docType === 'resume_docx') {
+        await client.query('UPDATE students SET resume_url = $1 WHERE id = $2 AND college_id = $3', [input.fileUrl, request.user!.id, request.user!.collegeId])
+      }
+      await client.query('COMMIT')
+      return response.status(201).json({ document: documentResult.rows[0], message: 'Document queued for security scanning' })
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
+    }
   } catch (error) {
     next(error)
   }

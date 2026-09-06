@@ -110,6 +110,13 @@ const notificationSchema = z.object({
   fileUrl: z.string().url().optional(),
 })
 
+const assignmentSchema = z.object({
+  teacherId: z.string().uuid(),
+  classId: z.string().uuid(),
+  subjectId: z.string().uuid(),
+  semesterId: z.string().uuid(),
+})
+
 const allowedDocumentTypes: Record<string, { mimeTypes: string[]; maxBytes: number }> = {
   photo: { mimeTypes: ['image/jpeg', 'image/png'], maxBytes: 5 * 1024 * 1024 },
   resume_pdf: { mimeTypes: ['application/pdf'], maxBytes: 10 * 1024 * 1024 },
@@ -276,6 +283,70 @@ app.post('/api/admin/notifications', requireAuth, requireRoles('super_admin'), a
       [request.user!.collegeId, input.title, input.body ?? null, input.targetRole ?? 'all', input.targetClassId ?? null, input.fileUrl ?? null, request.user!.id],
     )
     return response.status(201).json({ notification: result.rows[0] })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/admin/assignments', requireAuth, requireRoles('super_admin'), async (request: AuthRequest, response, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT a.id, a.teacher_id, u.full_name AS teacher_name, a.class_id, c.name AS class_name,
+              a.subject_id, s.name AS subject_name, a.semester_id, sem.sem_number, a.status
+         FROM teacher_class_assignments a
+         JOIN users u ON u.id = a.teacher_id AND u.college_id = $1
+         JOIN classes c ON c.id = a.class_id
+         JOIN subjects s ON s.id = a.subject_id
+         JOIN semesters sem ON sem.id = a.semester_id
+         JOIN academic_years ay ON ay.id = sem.academic_year_id AND ay.college_id = $1
+        ORDER BY a.status, u.full_name, sem.sem_number`,
+      [request.user!.collegeId],
+    )
+    return response.json({ assignments: result.rows })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/admin/assignments', requireAuth, requireRoles('super_admin'), async (request: AuthRequest, response, next) => {
+  try {
+    const input = assignmentSchema.parse(request.body)
+    const result = await pool.query(
+      `INSERT INTO teacher_class_assignments (teacher_id, class_id, subject_id, semester_id, status)
+       SELECT u.id, c.id, s.id, sem.id, 'active'
+         FROM users u
+         JOIN classes c ON c.id = $2
+         JOIN departments cd ON cd.id = c.department_id AND cd.college_id = $5
+         JOIN subjects s ON s.id = $3 AND s.department_id = c.department_id
+         JOIN semesters sem ON sem.id = $4
+         JOIN academic_years ay ON ay.id = sem.academic_year_id AND ay.college_id = $5
+        WHERE u.id = $1 AND u.college_id = $5 AND u.role = 'teacher'
+       ON CONFLICT (teacher_id, class_id, subject_id, semester_id)
+       DO UPDATE SET status = 'active'
+       RETURNING id, teacher_id, class_id, subject_id, semester_id, status`,
+      [input.teacherId, input.classId, input.subjectId, input.semesterId, request.user!.collegeId],
+    )
+    if (result.rowCount !== 1) return response.status(400).json({ error: 'Teacher, class, subject, or semester is outside this college' })
+    return response.status(201).json({ assignment: result.rows[0] })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/admin/assignments/:assignmentId', requireAuth, requireRoles('super_admin'), async (request: AuthRequest, response, next) => {
+  try {
+    const assignmentId = z.string().uuid().parse(request.params.assignmentId)
+    const result = await pool.query(
+      `UPDATE teacher_class_assignments a
+          SET status = 'past'
+         FROM users u, classes c, departments d
+        WHERE a.id = $1 AND u.id = a.teacher_id AND u.college_id = $2
+          AND c.id = a.class_id AND d.id = c.department_id AND d.college_id = $2
+      RETURNING a.id, a.status`,
+      [assignmentId, request.user!.collegeId],
+    )
+    if (result.rowCount !== 1) return response.status(404).json({ error: 'Assignment not found' })
+    return response.json({ assignment: result.rows[0] })
   } catch (error) {
     next(error)
   }

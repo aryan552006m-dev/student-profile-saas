@@ -67,6 +67,12 @@ const marksSchema = z.object({
   })).min(1).max(500),
 })
 
+const profileUpdateSchema = z.object({
+  linkedinUrl: z.string().url().or(z.literal('')).optional(),
+  githubUrl: z.string().url().or(z.literal('')).optional(),
+  bio: z.string().max(1000).optional(),
+})
+
 app.get('/api/health', (_request, response) => {
   response.json({ service: 'student-profile-saas-api', status: 'ok' })
 })
@@ -86,6 +92,52 @@ app.post('/api/auth/login', async (request, response, next) => {
     const authUser: AuthUser = { id: user.id, collegeId: user.college_id, role: user.role, email: user.email }
     await pool.query('UPDATE users SET last_login = now() WHERE id = $1', [user.id])
     return response.json({ accessToken: signToken(authUser), user: authUser })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/students/me', requireAuth, requireRoles('student'), async (request: AuthRequest, response, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT u.id, u.email, u.full_name, st.roll_number, st.linkedin_url, st.github_url,
+              st.profile_photo_url, st.resume_url, st.bio, st.profile_strength,
+              c.name AS class_name, d.name AS department_name
+         FROM users u
+         JOIN students st ON st.id = u.id AND st.college_id = u.college_id
+         LEFT JOIN classes c ON c.id = st.class_id
+         LEFT JOIN departments d ON d.id = st.department_id
+        WHERE u.id = $1 AND u.college_id = $2`,
+      [request.user!.id, request.user!.collegeId],
+    )
+    if (result.rowCount !== 1) return response.status(404).json({ error: 'Student profile not found' })
+    return response.json({ profile: result.rows[0] })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.put('/api/students/me', requireAuth, requireRoles('student'), async (request: AuthRequest, response, next) => {
+  try {
+    const input = profileUpdateSchema.parse(request.body)
+    const result = await pool.query(
+      `UPDATE students
+          SET linkedin_url = COALESCE($1, linkedin_url),
+              github_url = COALESCE($2, github_url),
+              bio = COALESCE($3, bio),
+              profile_strength = LEAST(100,
+                (CASE WHEN profile_photo_url IS NOT NULL THEN 20 ELSE 0 END) +
+                (CASE WHEN resume_url IS NOT NULL THEN 25 ELSE 0 END) +
+                (CASE WHEN COALESCE($1, linkedin_url) IS NOT NULL AND COALESCE($1, linkedin_url) <> '' THEN 15 ELSE 0 END) +
+                (CASE WHEN COALESCE($2, github_url) IS NOT NULL AND COALESCE($2, github_url) <> '' THEN 15 ELSE 0 END) +
+                (CASE WHEN COALESCE($3, bio) IS NOT NULL AND COALESCE($3, bio) <> '' THEN 10 ELSE 0 END) +
+                (CASE WHEN EXISTS (SELECT 1 FROM marks WHERE student_id = students.id) THEN 15 ELSE 0 END))
+        WHERE id = $4 AND college_id = $5
+      RETURNING linkedin_url, github_url, bio, profile_strength`,
+      [input.linkedinUrl, input.githubUrl, input.bio, request.user!.id, request.user!.collegeId],
+    )
+    if (result.rowCount !== 1) return response.status(404).json({ error: 'Student profile not found' })
+    return response.json({ profile: result.rows[0] })
   } catch (error) {
     next(error)
   }

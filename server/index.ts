@@ -102,6 +102,14 @@ const documentSchema = z.object({
 
 const presignSchema = documentSchema.pick({ docType: true, fileName: true, mimeType: true, sizeBytes: true })
 
+const notificationSchema = z.object({
+  title: z.string().min(1).max(255),
+  body: z.string().max(5000).optional(),
+  targetRole: z.enum(['all', 'students', 'teachers']).optional(),
+  targetClassId: z.string().uuid().optional(),
+  fileUrl: z.string().url().optional(),
+})
+
 const allowedDocumentTypes: Record<string, { mimeTypes: string[]; maxBytes: number }> = {
   photo: { mimeTypes: ['image/jpeg', 'image/png'], maxBytes: 5 * 1024 * 1024 },
   resume_pdf: { mimeTypes: ['application/pdf'], maxBytes: 10 * 1024 * 1024 },
@@ -231,6 +239,43 @@ app.post('/api/students/me/documents', requireAuth, requireRoles('student'), asy
     } finally {
       client.release()
     }
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/students/me/notifications', requireAuth, requireRoles('student'), async (request: AuthRequest, response, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT n.id, n.title, n.body, n.file_url, n.created_at,
+              CASE WHEN nr.notification_id IS NULL THEN false ELSE true END AS is_read
+         FROM notifications n
+         JOIN users u ON u.id = $1 AND u.college_id = n.college_id
+         JOIN students st ON st.id = u.id
+         LEFT JOIN notification_reads nr ON nr.notification_id = n.id AND nr.user_id = u.id
+        WHERE n.college_id = $2
+          AND (n.target_role IS NULL OR n.target_role IN ('all', 'students'))
+          AND (n.target_class_id IS NULL OR n.target_class_id = st.class_id)
+        ORDER BY n.created_at DESC
+        LIMIT 100`,
+      [request.user!.id, request.user!.collegeId],
+    )
+    return response.json({ notifications: result.rows })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/admin/notifications', requireAuth, requireRoles('super_admin'), async (request: AuthRequest, response, next) => {
+  try {
+    const input = notificationSchema.parse(request.body)
+    const result = await pool.query(
+      `INSERT INTO notifications (college_id, title, body, target_role, target_class_id, file_url, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, title, body, target_role, target_class_id, file_url, created_at`,
+      [request.user!.collegeId, input.title, input.body ?? null, input.targetRole ?? 'all', input.targetClassId ?? null, input.fileUrl ?? null, request.user!.id],
+    )
+    return response.status(201).json({ notification: result.rows[0] })
   } catch (error) {
     next(error)
   }
